@@ -8,18 +8,55 @@ const UTIO_CHATS_URL = '67c55fb63fcb09fffabc1c72';
 
 app.use(express.json());
 
-const OWNERS = [
-    "susana.nocete@npro.es",
-    "edgar.berrocal@npro.es",
-    "andrea.lopez@npro.es",
-];
+/** 
+ *
+ * @param {string} email - Email del usuario de Utio al que asignar el chat
+ * @returns {void}
+ * 
+*/
+async function asignChat(email) {
+    const updateResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/chats/+34${phoneNumber}/owner`, {
+        method: 'PATCH',
+        headers: {
+            'Authorization': `Token: ${UTIO_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            "email": email
+        })
+    });
+
+    const updateOwnerData = await updateResponse.json();
+    console.log("Respuesta de actualización:", updateOwnerData);
+}
+
+/**
+ * 
+ * @param {string} name - Nombre antiguo del contacto para no sobreescribirlo por completo
+ * @param {string} owner - Nombre del propietario del contacto
+ */
+async function changeName(name, owner) {
+    const updateNameResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/contacts/+34${phoneNumber}`, {
+        method: 'PATCH',
+        headers: {
+            'Authorization': `Token: ${UTIO_API_KEY}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: `${name} (${owner})`
+        })
+    });
+
+    const updateNameData = await updateNameResponse.json();
+    console.log("Respuesta de actualización:", updateNameData);
+}
 
 app.post("/utio-chat", async (req, res) => {
     try {
         const data = req.body;
 
-        const hasOwner = data.data.chat.owner.agent; // Si tiene un propietario
-        // Permitir solo los que no tienen propietario en Utio
+        // Permitir solo usuarios sin propietario
+        const hasOwner = data.data.chat.owner.agent;
         if (hasOwner !== null) {
             console.log("EL contacto ya tiene un propietario");
             return res.status(200).send("El contacto ya tiene un propietario.");
@@ -40,76 +77,28 @@ app.post("/utio-chat", async (req, res) => {
                 }
             }
         );
-
         const contactData = await contactResponse.json();
 
-        // Solo tratar contactos que su número de télefono aparezca 1 única vez en Clientify
-        if (contactData.count === 0) return res.status(404).send("No existe el contacto en la base de datos.");
-        if (contactData.count > 1) return res.status(400).send("Existen varios contactos con ese número de teléfono.");
+        /*
+            Si no existe el contacto en Clientify lo asignamos a Atención al cliente.
+        */
+        if (contactData.count === 0) asignChat('info@npro.es');
 
-        // Obtener el email y el nombre del propietario del contacto
-        const contactOwner = contactData.results[0].owner;
+        /*
+            Si hay más de un contacto con ese número lo asignamos a VI pero no le ponemos el nombre del propietario, en su lugar ponemos un Num. Repetido
+        */
+
+        if (contactData.count > 1) {
+            asignChat('vi@npro.es');
+            changeName(name, 'Num. Repetido');
+            return res.status(200).send("Contacto registrado sin propietario correctamente");
+        }
+        /*
+            Si solo hay un contacto con ese número lo asignamos a VI y ponemos el nombre del propietario
+        */
         const contactOwnerName = contactData.results[0].owner_name;
-        let exists = false;
-
-        // Buscar si el propietario es de VI
-        for (let owner of OWNERS) {
-            if (contactOwner.includes(owner)) {
-                exists = true;
-                break;
-            }
-        }
-
-        // Si el contacto no existe o no es de VI lo asignamos a Atención al cliente
-        if (!exists) {
-            // Cabmio de propietario
-            const updateResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/chats/+34${phoneNumber}/owner`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Token: ${UTIO_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    "email": 'info@npro.es'
-                })
-            });
-
-            const updateData = await updateResponse.json();
-            console.log("Respuesta de actualización:", updateData);
-        }
-
-        // Si el contacto existe en Clientify lo asignamos a VI y le cambiamos el nombre y ponemos su nombre junto al nombre de propietario.
-        if (exists) {
-            // Cambio de propietario
-            const updateResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/chats/+34${phoneNumber}/owner`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Token: ${UTIO_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    "email": 'vi@npro.es'
-                })
-            });
-
-            const updateOwnerData = await updateResponse.json();
-            console.log("Respuesta de actualización:", updateOwnerData);
-
-            // Cambio de nombre
-            const updateNameResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/contacts/+34${phoneNumber}`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Token: ${UTIO_API_KEY}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    name: `${name} (${contactOwnerName})`
-                })
-            });
-
-            const updateNameData = await updateNameResponse.json();
-            console.log("Respuesta de actualización:", updateNameData);
-        }
+        asignChat('vi@npro.es');
+        changeName(name, contactOwnerName)
 
         return res.status(200).send("Webhook recibido correctamente");
     } catch (e) {
