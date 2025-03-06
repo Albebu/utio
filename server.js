@@ -1,115 +1,116 @@
 import express from 'express';
-import fetch from 'node-fetch'
+import fetch from 'node-fetch';
+import cors from 'cors';
+import { CLIENTIFY_API_KEY, UTIO_API_KEY, UTIO_CHATS_URL } from "./env.js";
+import {
+    getUserByPhoneClientify,
+    createClientifyNote,
+    assignChat,
+    updateContactName
+} from './functions.js';
+
 const app = express();
 
-const CLIENTIFY_API_KEY = "e8ffbf558376e04a2acd4dfd282e60a142c9fb26";
-const UTIO_API_KEY = 'c928875d44c99b55d88ab78c71f2015d7fecef4e9e7cd86e3ef33731f76e5cb083fa62b47af7e9c3';
-const UTIO_CHATS_URL = '67c55fb63fcb09fffabc1c72';
-
 app.use(express.json());
-
-/** 
- *
- * @param {string} email - Email del usuario de Utio al que asignar el chat
- * @returns {void}
- * 
-*/
-async function asignChat(email) {
-    const updateResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/chats/+34${phoneNumber}/owner`, {
-        method: 'PATCH',
-        headers: {
-            'Authorization': `Token: ${UTIO_API_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            "email": email
-        })
-    });
-
-    const updateOwnerData = await updateResponse.json();
-    console.log("Respuesta de actualización:", updateOwnerData);
-}
+app.use(cors());
 
 /**
- * 
- * @param {string} name - Nombre antiguo del contacto para no sobreescribirlo por completo
- * @param {string} owner - Nombre del propietario del contacto
+ * Webhook para la autoasignación de chats.
  */
-async function changeName(name, owner) {
-    const updateNameResponse = await fetch(`https://whatsapp-api.utio.io/v1/chat/${UTIO_CHATS_URL}/contacts/+34${phoneNumber}`, {
-        method: 'PATCH',
-        headers: {
-            'Authorization': `Token: ${UTIO_API_KEY}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            name: `${name} (${owner})`
-        })
-    });
-
-    const updateNameData = await updateNameResponse.json();
-    console.log("Respuesta de actualización:", updateNameData);
-}
-
 app.post("/utio-chat", async (req, res) => {
     try {
-        const data = req.body;
+        const { data } = req.body;
+        const { chat, fromNumber } = data;
+        const phoneNumber = fromNumber.replace("+34", ""); // Normaliza el número
+        const contactName = chat.name;
+        const ownerAgentId = chat.owner.agent;
 
-        // Permitir solo usuarios sin propietario
-        const hasOwner = data.data.chat.owner.agent;
-        if (hasOwner !== null) {
-            console.log("EL contacto ya tiene un propietario");
-            return res.status(200).send("El contacto ya tiene un propietario.");
-        }
-
-        // Quitamos el +34 para buscar en Clientify el usuario por el número
-        const phoneNumber = data.data.fromNumber.replace("+34", "");
-        const name = data.data.chat.contact.info.name;
-
-        // Obtener los datos del contacto buscandolo por el número de télefono
-        const contactResponse = await fetch(
-            `https://api.clientify.net/v1/contacts/?phone=${phoneNumber}`,
-            {
+        // Si ya tiene un propietario, se envía una notificación
+        if (ownerAgentId) {
+            const teamUrl = `https://whatsapp.utio.io/v1/devices/${UTIO_CHATS_URL}/team`;
+            const teamResponse = await fetch(teamUrl, {
                 method: 'GET',
-                headers: {
-                    'Authorization': `Token ${CLIENTIFY_API_KEY}`,
-                    'Content-Type': 'application/json',
-                }
+                headers: { 'Authorization': `Token ${UTIO_API_KEY}` }
+            });
+
+            if (teamResponse.ok) {
+                const teamData = await teamResponse.json();
+                const owner = teamData.find(member => member.id === ownerAgentId);
+                const ownerName = owner ? owner.displayName : "desconocido";
+
+                // Enviar notificación al equipo
+                const message = `Nuevo mensaje de ${ownerName} de ${contactName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/${phoneNumber}`;
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${UTIO_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ phone: '+34644640116', message })
+                });
             }
-        );
-        const contactData = await contactResponse.json();
-
-        /*
-            Si no existe el contacto en Clientify lo asignamos a Atención al cliente.
-        */
-        if (contactData.count === 0) asignChat('info@npro.es');
-
-        /*
-            Si hay más de un contacto con ese número lo asignamos a VI pero no le ponemos el nombre del propietario, en su lugar ponemos un Num. Repetido
-        */
-
-        if (contactData.count > 1) {
-            asignChat('vi@npro.es');
-            changeName(name, 'Num. Repetido');
-            return res.status(200).send("Contacto registrado sin propietario correctamente");
         }
-        /*
-            Si solo hay un contacto con ese número lo asignamos a VI y ponemos el nombre del propietario
-        */
-        const contactOwnerName = contactData.results[0].owner_name;
-        asignChat('vi@npro.es');
-        changeName(name, contactOwnerName)
 
-        return res.status(200).send("Webhook recibido correctamente");
-    } catch (e) {
-        console.error("Error: ", e);
-        if (!res.headersSent) {
-            return res.status(500).send("Hubo un error al procesar el webhook.");
+        // Si no tiene propietario, se consulta en Clientify
+        const contactData = await getUserByPhoneClientify(phoneNumber);
+
+        if (!contactData) {
+            console.error("No se pudo obtener la información del contacto.");
+            return res.status(500).send("Error al obtener información del contacto.");
         }
+
+        // Asignación del chat según cantidad de registros encontrados
+        if (contactData.count === 0) {
+            await assignChat(phoneNumber, 'info@npro.es'); // Cliente no registrado
+        } else {
+            await assignChat(phoneNumber, 'vi@npro.es'); // Cliente profesional
+            const ownerName = contactData.count > 1 ? 'Num. Repetido' : (contactData.results[0].owner_name);
+            await updateContactName(phoneNumber, contactName, ownerName);
+        }
+
+        res.status(200).send("Webhook procesado correctamente");
+    } catch (error) {
+        console.error("Error en /utio-chat:", error);
+        if (!res.headersSent) res.status(500).send("Error interno en el webhook.");
     }
 });
 
+/**
+ * Enviar mensaje a un usuario por WhatsApp.
+ */
+app.post('/send-message', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+        if (!phone || !message) return res.status(400).json({ error: 'Teléfono y mensaje requeridos.' });
 
-app.listen(3000, () =>
-    console.log("Servidor escuchando en http://localhost:3000")
-);
+        // Enviar mensaje vía API de Utio
+        const response = await fetch('https://whatsapp-api.utio.io/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Token ${UTIO_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ phone, message })
+        });
+
+        if (!response.ok) {
+            console.error(`Error enviando mensaje: ${response.statusText}`);
+            return res.status(500).json({ error: 'Error al enviar el mensaje.' });
+        }
+
+        // Registrar nota en Clientify
+        const contactResponse = await getUserByPhoneClientify(phone);
+        if (contactResponse.results) {
+            for (const contact of contactResponse.results) {
+                await createClientifyNote(contact.id, "Conversación iniciada por Whatsapp", message);
+            }
+        }
+
+        res.status(200).json(await response.json());
+    } catch (error) {
+        console.error("Error en /send-message:", error);
+        res.status(500).json({ error: 'Error procesando la solicitud' });
+    }
+});
+
+app.listen(3000, () => console.log("Servidor en http://localhost:3000"));
