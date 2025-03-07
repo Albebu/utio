@@ -21,13 +21,12 @@ app.post("/utio-chat", async (req, res) => {
     try {
         const { data } = req.body;
         const { chat, fromNumber } = data;
-        const phoneNumber = fromNumber.replace("+34", ""); // Normaliza el número
+        const phoneNumber = fromNumber.replace("+34", "");
         const contactName = chat.name;
         const ownerAgentId = chat.owner.agent;
 
-        // Si ya tiene un propietario, se envía una notificación
         if (ownerAgentId) {
-            const teamUrl = `https://whatsapp.utio.io/v1/devices/${UTIO_CHATS_URL}/team`;
+            const teamUrl = `https://whatsapp-api.utio.io/v1/team`;
             const teamResponse = await fetch(teamUrl, {
                 method: 'GET',
                 headers: { 'Authorization': `Token ${UTIO_API_KEY}` }
@@ -36,36 +35,38 @@ app.post("/utio-chat", async (req, res) => {
             if (teamResponse.ok) {
                 const teamData = await teamResponse.json();
                 const owner = teamData.find(member => member.id === ownerAgentId);
-                const ownerName = owner ? owner.displayName : "desconocido";
 
-                // Enviar notificación al equipo
-                const message = `Nuevo mensaje de ${ownerName} de ${contactName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/${phoneNumber}`;
-                await fetch('https://whatsapp-api.utio.io/v1/messages', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Token ${UTIO_API_KEY}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ phone: '+34644640116', message })
-                });
+                // Solo notificar si el propietario es de Venta Interna 
+                if (owner?.initials === "VI") {
+                    const contact = await getUserByPhoneClientify(phoneNumber);
+                    const ownerName = contact.results[0]?.owner_name;
+
+                    // Enviar notificación al equipo
+                    const message = `Nuevo mensaje de ${contact.first_name} ${contact.last_name} de ${ownerName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/+34${phoneNumber}`;
+
+                    await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Token ${UTIO_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ phone: '+34621415478', message })
+                    });
+                }
             }
-        }
-
-        // Si no tiene propietario, se consulta en Clientify
-        const contactData = await getUserByPhoneClientify(phoneNumber);
-
-        if (!contactData) {
-            console.error("No se pudo obtener la información del contacto.");
-            return res.status(500).send("Error al obtener información del contacto.");
-        }
-
-        // Asignación del chat según cantidad de registros encontrados
-        if (contactData.count === 0) {
-            await assignChat(phoneNumber, 'info@npro.es'); // Cliente no registrado
         } else {
-            await assignChat(phoneNumber, 'vi@npro.es'); // Cliente profesional
-            const ownerName = contactData.count > 1 ? 'Num. Repetido' : (contactData.results[0].owner_name);
-            await updateContactName(phoneNumber, contactName, ownerName);
+            // Si no tiene propietario, se consulta en Clientify
+            const contactData = await getUserByPhoneClientify(phoneNumber);
+
+            // Asignación del chat según cantidad de registros encontrados
+            if (contactData.count === 0 || contactData === null || contactData === undefined) {
+                await assignChat(phoneNumber, 'info@npro.es'); // Cliente no registrado
+            } else {
+                await assignChat(phoneNumber, 'vi@npro.es'); // Cliente profesional
+                const ownerName = contactData.count > 1 ? 'Num. Repetido' : (contactData.results[0].owner_name);
+                await updateContactName(phoneNumber, contactName, ownerName);
+            }
+
         }
 
         res.status(200).send("Webhook procesado correctamente");
@@ -109,7 +110,7 @@ app.post('/send-message', async (req, res) => {
         res.status(200).json(await response.json());
     } catch (error) {
         console.error("Error en /send-message:", error);
-        res.status(500).json({ error: 'Error procesando la solicitud' });
+        res.status(500).json({ error: 'Error enviando el mensaje' });
     }
 });
 
