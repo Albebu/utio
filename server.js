@@ -19,42 +19,14 @@ app.use(cors());
  */
 app.post("/utio-chat", async (req, res) => {
     try {
+        // Obtención del número de teléfono, el nombre del contacto y el id del propietario si tiene
         const { data } = req.body;
         const { chat, fromNumber } = data;
         const phoneNumber = fromNumber.replace("+34", "");
-        const contactName = chat.name;
         const ownerAgentId = chat.owner.agent;
 
-        if (ownerAgentId) {
-            const teamUrl = `https://whatsapp-api.utio.io/v1/team`;
-            const teamResponse = await fetch(teamUrl, {
-                method: 'GET',
-                headers: { 'Authorization': `Token ${UTIO_API_KEY}` }
-            });
-
-            if (teamResponse.ok) {
-                const teamData = await teamResponse.json();
-                const owner = teamData.find(member => member.id === ownerAgentId);
-
-                // Solo notificar si el propietario es de Venta Interna 
-                if (owner?.initials === "VI") {
-                    const contact = await getUserByPhoneClientify(phoneNumber);
-                    const ownerName = contact.results[0]?.owner_name;
-
-                    // Enviar notificación al equipo
-                    const message = `Nuevo mensaje de ${contact.first_name} ${contact.last_name} de ${ownerName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/+34${phoneNumber}`;
-
-                    await fetch('https://whatsapp-api.utio.io/v1/messages', {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Token ${UTIO_API_KEY}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ phone: '+34621415478', message })
-                    });
-                }
-            }
-        } else {
+        // Si no tiene propietario se asigna uno en función de si existe en clientify o no.
+        if (!ownerAgentId) {
             // Si no tiene propietario, se consulta en Clientify
             const contactData = await getUserByPhoneClientify(phoneNumber);
 
@@ -62,13 +34,50 @@ app.post("/utio-chat", async (req, res) => {
             if (contactData.count === 0 || contactData === null || contactData === undefined) {
                 await assignChat(phoneNumber, 'info@npro.es'); // Cliente no registrado
             } else {
+                // Si hay mas de un contacto no le ponemos nombre. 
                 await assignChat(phoneNumber, 'vi@npro.es'); // Cliente profesional
                 const ownerName = contactData.count > 1 ? 'Num. Repetido' : (contactData.results[0].owner_name);
-                await updateContactName(phoneNumber, contactName, ownerName);
+                const firstName = contactData.results[0].first_name;
+                await updateContactName(phoneNumber, firstName, ownerName);
             }
 
+            return res.status(200).json({ message: "Contacto asignado correctamente." });
         }
 
+        // Si tiene propietario avisamos a VI a través de Inbox con un mensaje personalizado.
+        const teamUrl = `https://whatsapp-api.utio.io/v1/team`;
+        const teamResponse = await fetch(teamUrl, {
+            method: 'GET',
+            headers: { 'Authorization': `Token ${UTIO_API_KEY}` }
+        });
+        if (teamResponse.ok) {
+            const teamData = await teamResponse.json();
+            const owner = teamData.find(member => member.id === ownerAgentId);
+
+            // Solo notificar si el propietario es de Venta Interna 
+            if (owner?.initials === "VI") {
+                const response = await getUserByPhoneClientify(phoneNumber);
+                const data = response.results[0];
+                // Obtener el nombre del contacto y del propietario para enviarlo junto al mensaje.
+                const contactFirstName = data.first_name;
+                const contactSecondName = data.last_name;
+                const ownerName = data.owner_name;
+
+                updateContactName(phoneNumber, contactFirstName, ownerName);
+
+                // Enviar notificación al equipo
+                const message = `Nuevo mensaje de ${contactFirstName} ${contactSecondName} de ${ownerName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/+34${phoneNumber}`;
+
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Token ${UTIO_API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ phone: '+34621415478', message })
+                });
+            }
+        }
         res.status(200).send("Webhook procesado correctamente");
     } catch (error) {
         console.error("Error en /utio-chat:", error);
