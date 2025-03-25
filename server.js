@@ -65,6 +65,20 @@ app.post("/utio-chat", async (req, res) => {
 
                 updateContactName(phoneNumber, contactFirstName, ownerName);
 
+                const clientMessage = `
+                ☝️☝️☝️
+                Para recibir una mejor atención, por favor, pulse sobre el contacto de atención a profesionales
+                `
+                // Autorespuesta al recibir un mensaje
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Token': UTIO_API_KEY
+                    },
+                    body: JSON.stringify({ phone: fromNumber, message: clientMessage })
+                })
+       
                 // Enviar notificación al equipo
                 const message = `Nuevo mensaje de ${contactFirstName} ${contactSecondName} de ${ownerName} (${fromNumber}). Revisa Utio: https://whatsapp.utio.io/${UTIO_CHATS_URL}/c/+34${phoneNumber}`;
 
@@ -74,11 +88,30 @@ app.post("/utio-chat", async (req, res) => {
                         'Authorization': `Token ${UTIO_API_KEY}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ phone: '+34621415478', message })
+                    body: JSON.stringify({ phone: '+34621415478', message, contacts: [{phone: '+34621415478', name: 'Npro profesional'}] })
                 });
+
+                // Enviar el contacto
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Token': UTIO_API_KEY
+                    },
+                    body: JSON.stringify({
+                         phone: JSON.stringify({ phone: fromNumber }),
+                        contacts: [{phone: '+34621415478', name: 'Npro profesional'}]
+                    })
+                })
             }
         }
-        res.status(200).send("Webhook procesado correctamente");
+        const date = new Date();
+        const day = date.getDate();
+        const hour = date.getHours();
+        const month = date.getMonth();
+        const minute = date.getMinutes();
+        console.log(`Fecha: ${day}/${month + 1} ${hour}:${minute}. Proceso: Utio webhook asignación contactos.`)
+        return res.status(200).send("Webhook procesado correctamente");
     } catch (error) {
         console.error("Error en /utio-chat:", error);
         if (!res.headersSent) res.status(500).send("Error interno en el webhook.");

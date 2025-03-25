@@ -25,7 +25,6 @@ export async function assignChat(phoneNumber, email) {
             return null;
         }
         const updateOwnerData = await response.json();
-        console.log("Respuesta asignación de chat:", updateOwnerData);
         return updateOwnerData;
     } catch (error) {
         console.error("Error en assignChat:", error);
@@ -58,7 +57,6 @@ export async function updateContactName(phoneNumber, currentName, owner) {
             return null;
         }
         const updateNameData = await response.json();
-        console.log("Respuesta actualización de nombre:", updateNameData);
         return updateNameData;
     } catch (error) {
         console.error("Error en updateContactName:", error);
