@@ -39,6 +39,32 @@ app.post("/utio-chat", async (req, res) => {
                 const ownerName = contactData.count > 1 ? 'Num. Repetido' : (contactData.results[0].owner_name);
                 const firstName = contactData.results[0].first_name;
                 await updateContactName(phoneNumber, firstName, ownerName);
+
+                const clientMessage = `
+                ☝️☝️☝️
+                Para recibir una mejor atención, por favor, pulse sobre el contacto de atención a profesionales
+                `
+
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Token': UTIO_API_KEY
+                    },
+                    body: JSON.stringify({
+                         phone: JSON.stringify({ phone: fromNumber }),
+                        contacts: [{phone: '+34621415478', name: 'Npro profesional'}]
+                    })
+                })
+                // Autorespuesta al recibir un mensaje
+                await fetch('https://whatsapp-api.utio.io/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Token': UTIO_API_KEY
+                    },
+                    body: JSON.stringify({ phone: fromNumber, message: clientMessage })
+                })
             }
 
             return res.status(200).json({ message: "Contacto asignado correctamente." });
