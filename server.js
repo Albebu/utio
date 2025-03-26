@@ -171,7 +171,7 @@ app.post('/send-message', async (req, res) => {
         const contactResponse = await getUserByPhoneClientify(phone);
         if (contactResponse.results) {
             for (const contact of contactResponse.results) {
-                await createClientifyNote(contact.id, "Conversación iniciada por Whatsapp", message);
+                await createClientifyNote(contact.id, "Conversación iniciada en Utio (Núm. Particulares)", message);
             }
         }
 
